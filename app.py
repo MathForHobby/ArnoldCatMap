@@ -4,401 +4,522 @@ from io import BytesIO
 
 import numpy as np
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
+
+# =========================
+# 기본 설정
+# =========================
 
 st.set_page_config(
-    page_title="Arnold's Cat Map 체험기",
+    page_title="Arnold's Cat Map",
     page_icon="🐈",
     layout="wide",
 )
 
+MATRIX_PRESETS = {
+    "Standard Cat Map": np.array([[1, 1], [1, 2]], dtype=np.int64),
+    "Classic Cat Map": np.array([[2, 1], [1, 1]], dtype=np.int64),
+    "Strong Mixing": np.array([[1, 2], [1, 3]], dtype=np.int64),
+}
 
-# -----------------------------
-# Image preprocessing
-# -----------------------------
-
-def center_crop_to_square(img: Image.Image, size: int) -> Image.Image:
-    """Crop the center square and resize to size x size."""
-    img = img.convert("RGB")
-    w, h = img.size
-    side = min(w, h)
-    left = (w - side) // 2
-    top = (h - side) // 2
-    cropped = img.crop((left, top, left + side, top + side))
-    return cropped.resize((size, size), Image.Resampling.LANCZOS)
+MATRIX_DESCRIPTIONS = {
+    "Standard Cat Map": "가장 널리 알려진 형태 중 하나입니다.",
+    "Classic Cat Map": "문헌에서 자주 등장하는 고전적인 형태입니다.",
+    "Strong Mixing": "trace가 더 커서 더 강하게 섞이는 느낌을 줍니다.",
+}
 
 
-def fit_with_padding_to_square(
-    img: Image.Image,
-    size: int,
-    padding_color: tuple[int, int, int] = (20, 20, 24),
-) -> Image.Image:
-    """Fit the whole image into a square canvas, preserving aspect ratio."""
-    img = img.convert("RGB")
-    w, h = img.size
-    scale = size / max(w, h)
-    new_w = max(1, round(w * scale))
-    new_h = max(1, round(h * scale))
+# =========================
+# 이미지 전처리
+# =========================
 
-    resized = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", (size, size), padding_color)
-    left = (size - new_w) // 2
-    top = (size - new_h) // 2
-    canvas.paste(resized, (left, top))
-    return canvas
-
-
-def make_demo_image(size: int) -> Image.Image:
-    """Create a simple built-in demo image so the app works without upload."""
-    img = Image.new("RGB", (size, size), (245, 247, 250))
+def create_default_demo_image(size: int = 512) -> Image.Image:
+    """
+    외부 파일 없이 사용할 수 있는 간단한 데모 이미지.
+    고양이 느낌의 도형 이미지를 직접 생성한다.
+    """
+    img = Image.new("RGB", (size, size), (245, 242, 235))
     draw = ImageDraw.Draw(img)
 
-    # grid
-    step = max(16, size // 16)
-    for x in range(0, size, step):
-        draw.line((x, 0, x, size), fill=(220, 225, 232), width=1)
-    for y in range(0, size, step):
-        draw.line((0, y, size, y), fill=(220, 225, 232), width=1)
+    # 배경 격자
+    step = size // 16
+    for i in range(0, size, step):
+        draw.line((i, 0, i, size), fill=(225, 222, 215), width=1)
+        draw.line((0, i, size, i), fill=(225, 222, 215), width=1)
 
-    # stylized cat face
+    # 고양이 얼굴
     cx, cy = size // 2, size // 2
-    r = size // 4
-    face = (255, 210, 120)
-    outline = (40, 45, 60)
-    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=face, outline=outline, width=max(2, size // 128))
+    r = int(size * 0.25)
 
-    # ears
+    # 귀
     draw.polygon(
-        [(cx - r * 3 // 4, cy - r * 3 // 4), (cx - r, cy - r * 7 // 4), (cx - r // 4, cy - r)],
-        fill=face,
-        outline=outline,
+        [
+            (cx - r, cy - r // 2),
+            (cx - int(r * 0.75), cy - int(r * 1.45)),
+            (cx - int(r * 0.25), cy - r),
+        ],
+        fill=(60, 60, 60),
     )
     draw.polygon(
-        [(cx + r * 3 // 4, cy - r * 3 // 4), (cx + r, cy - r * 7 // 4), (cx + r // 4, cy - r)],
-        fill=face,
-        outline=outline,
+        [
+            (cx + r, cy - r // 2),
+            (cx + int(r * 0.75), cy - int(r * 1.45)),
+            (cx + int(r * 0.25), cy - r),
+        ],
+        fill=(60, 60, 60),
     )
 
-    # eyes, nose, mouth
-    eye_r = max(3, size // 40)
-    draw.ellipse((cx - r // 2 - eye_r, cy - r // 5 - eye_r, cx - r // 2 + eye_r, cy - r // 5 + eye_r), fill=outline)
-    draw.ellipse((cx + r // 2 - eye_r, cy - r // 5 - eye_r, cx + r // 2 + eye_r, cy - r // 5 + eye_r), fill=outline)
-    draw.polygon([(cx, cy), (cx - size // 40, cy + size // 30), (cx + size // 40, cy + size // 30)], fill=(210, 80, 90))
-    draw.arc((cx - size // 12, cy, cx, cy + size // 10), 10, 170, fill=outline, width=max(1, size // 160))
-    draw.arc((cx, cy, cx + size // 12, cy + size // 10), 10, 170, fill=outline, width=max(1, size // 160))
+    # 얼굴
+    draw.ellipse(
+        (cx - r, cy - r, cx + r, cy + r),
+        fill=(70, 70, 70),
+        outline=(30, 30, 30),
+        width=4,
+    )
 
-    # whiskers
-    for dy in [-size // 32, size // 64, size // 20]:
-        draw.line((cx - r // 6, cy + dy, cx - r, cy + dy - size // 24), fill=outline, width=max(1, size // 170))
-        draw.line((cx + r // 6, cy + dy, cx + r, cy + dy - size // 24), fill=outline, width=max(1, size // 170))
+    # 눈
+    eye_r = size // 35
+    draw.ellipse(
+        (cx - r // 2 - eye_r, cy - r // 5 - eye_r, cx - r // 2 + eye_r, cy - r // 5 + eye_r),
+        fill=(245, 245, 245),
+    )
+    draw.ellipse(
+        (cx + r // 2 - eye_r, cy - r // 5 - eye_r, cx + r // 2 + eye_r, cy - r // 5 + eye_r),
+        fill=(245, 245, 245),
+    )
 
-    # title text
-    try:
-        font = ImageFont.truetype("DejaVuSans-Bold.ttf", max(18, size // 18))
-        small_font = ImageFont.truetype("DejaVuSans.ttf", max(12, size // 32))
-    except Exception:
-        font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
+    # 코와 입
+    draw.polygon(
+        [
+            (cx - size // 45, cy + size // 30),
+            (cx + size // 45, cy + size // 30),
+            (cx, cy + size // 15),
+        ],
+        fill=(230, 120, 130),
+    )
+    draw.arc(
+        (cx - size // 12, cy + size // 25, cx, cy + size // 7),
+        start=10,
+        end=170,
+        fill=(230, 230, 230),
+        width=2,
+    )
+    draw.arc(
+        (cx, cy + size // 25, cx + size // 12, cy + size // 7),
+        start=10,
+        end=170,
+        fill=(230, 230, 230),
+        width=2,
+    )
 
-    title = "Arnold's Cat Map"
-    subtitle = "deterministic chaos"
-    title_box = draw.textbbox((0, 0), title, font=font)
-    subtitle_box = draw.textbbox((0, 0), subtitle, font=small_font)
-    draw.text(((size - (title_box[2] - title_box[0])) // 2, size - size // 7), title, fill=outline, font=font)
-    draw.text(((size - (subtitle_box[2] - subtitle_box[0])) // 2, size - size // 11), subtitle, fill=(90, 95, 110), font=small_font)
+    # 수염
+    for dy in [-size // 25, 0, size // 25]:
+        draw.line(
+            (cx - r // 4, cy + dy, cx - r - size // 8, cy + dy - size // 30),
+            fill=(235, 235, 235),
+            width=2,
+        )
+        draw.line(
+            (cx + r // 4, cy + dy, cx + r + size // 8, cy + dy - size // 30),
+            fill=(235, 235, 235),
+            width=2,
+        )
+
+    # 방향성을 알아보기 위한 색 블록
+    block = size // 9
+    draw.rectangle((20, 20, 20 + block, 20 + block), fill=(180, 80, 80))
+    draw.rectangle((size - 20 - block, 20, size - 20, 20 + block), fill=(80, 130, 190))
+    draw.rectangle((20, size - 20 - block, 20 + block, size - 20), fill=(80, 160, 100))
+    draw.rectangle((size - 20 - block, size - 20 - block, size - 20, size - 20), fill=(180, 150, 60))
 
     return img
 
 
-def image_to_png_bytes(img: Image.Image) -> bytes:
+def center_crop_and_resize(image: Image.Image, size: int) -> Image.Image:
+    """
+    이미지 중앙을 기준으로 정사각형으로 자른 뒤 size x size로 리사이즈.
+    """
+    image = image.convert("RGB")
+    w, h = image.size
+    side = min(w, h)
+
+    left = (w - side) // 2
+    top = (h - side) // 2
+    right = left + side
+    bottom = top + side
+
+    cropped = image.crop((left, top, right, bottom))
+    return cropped.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def fit_with_padding_and_resize(image: Image.Image, size: int) -> Image.Image:
+    """
+    원본 전체를 유지하면서 정사각형 캔버스 안에 넣는다.
+    남는 공간은 어두운 회색 여백으로 채운다.
+    """
+    image = image.convert("RGB")
+    w, h = image.size
+
+    scale = size / max(w, h)
+    new_w = max(1, int(round(w * scale)))
+    new_h = max(1, int(round(h * scale)))
+
+    resized = image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+    canvas = Image.new("RGB", (size, size), (24, 24, 24))
+    left = (size - new_w) // 2
+    top = (size - new_h) // 2
+    canvas.paste(resized, (left, top))
+
+    return canvas
+
+
+def image_to_png_bytes(array: np.ndarray) -> bytes:
+    """
+    numpy image array를 PNG bytes로 변환.
+    """
+    img = Image.fromarray(array.astype(np.uint8), mode="RGB")
     buffer = BytesIO()
     img.save(buffer, format="PNG")
     return buffer.getvalue()
 
 
-# -----------------------------
-# Arnold's Cat Map
-# -----------------------------
+# =========================
+# Arnold's Cat Map 핵심 로직
+# =========================
 
 @st.cache_data(show_spinner=False)
-def cat_maps(n: int):
-    """Precompute coordinate maps for forward and inverse Arnold's Cat Map."""
-    y, x = np.indices((n, n))
+def get_mapping_indices(size: int, matrix_tuple: tuple[int, int, int, int]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    주어진 행렬 A에 대해 모든 픽셀 좌표의 이동 위치를 미리 계산한다.
 
-    # Forward map:
-    # x' = x + y mod N
-    # y' = x + 2y mod N
-    forward_x = (x + y) % n
-    forward_y = (x + 2 * y) % n
+    x' = a x + b y mod N
+    y' = c x + d y mod N
+    """
+    a, b, c, d = matrix_tuple
+    y, x = np.indices((size, size), dtype=np.int64)
 
-    # Inverse map of [[1,1],[1,2]] is [[2,-1],[-1,1]] modulo N.
-    # Given current coordinate (x', y'), its previous coordinate is:
-    # x = 2x' - y' mod N
-    # y = -x' + y' mod N
-    inverse_x = (2 * x - y) % n
-    inverse_y = (-x + y) % n
+    new_x = (a * x + b * y) % size
+    new_y = (c * x + d * y) % size
 
-    return y, x, forward_y, forward_x, inverse_y, inverse_x
+    return new_y, new_x
 
 
-def cat_forward(arr: np.ndarray) -> np.ndarray:
-    n = arr.shape[0]
-    y, x, forward_y, forward_x, _, _ = cat_maps(n)
-    out = np.empty_like(arr)
-    out[forward_y, forward_x] = arr[y, x]
-    return out
+def apply_cat_map(array: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """
+    이미지 배열에 Arnold's Cat Map을 1회 적용한다.
+    """
+    size = array.shape[0]
+    matrix_tuple = tuple(int(v) for v in matrix.flatten())
+
+    new_y, new_x = get_mapping_indices(size, matrix_tuple)
+
+    result = np.empty_like(array)
+    result[new_y, new_x] = array
+
+    return result
 
 
-def cat_inverse(arr: np.ndarray) -> np.ndarray:
-    n = arr.shape[0]
-    y, x, _, _, inverse_y, inverse_x = cat_maps(n)
-    out = np.empty_like(arr)
-    out[inverse_y, inverse_x] = arr[y, x]
-    return out
+def inverse_matrix_det_one(matrix: np.ndarray) -> np.ndarray:
+    """
+    det = 1인 2x2 정수 행렬의 정수 역행렬을 구한다.
+    A = [[a,b],[c,d]]이면 A^{-1} = [[d,-b],[-c,a]]
+    """
+    a, b = matrix[0, 0], matrix[0, 1]
+    c, d = matrix[1, 0], matrix[1, 1]
+
+    det = int(a * d - b * c)
+
+    if det != 1:
+        raise ValueError("현재 코드는 det = 1인 행렬만 역변환을 지원합니다.")
+
+    return np.array([[d, -b], [-c, a]], dtype=np.int64)
 
 
-def apply_steps(arr: np.ndarray, steps: int) -> np.ndarray:
-    if steps >= 0:
-        for _ in range(steps):
-            arr = cat_forward(arr)
-    else:
-        for _ in range(-steps):
-            arr = cat_inverse(arr)
-    return arr
+def apply_inverse_cat_map(array: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    """
+    Arnold's Cat Map의 역변환을 1회 적용한다.
+    """
+    inv = inverse_matrix_det_one(matrix)
+    return apply_cat_map(array, inv)
 
 
 @st.cache_data(show_spinner=False)
-def find_matrix_period(n: int, max_iter: int = 50_000) -> int | None:
-    """Return the period of the cat-map matrix modulo n, if found."""
-    a, b, c, d = 1, 1, 1, 2  # A
-    ma, mb, mc, md = 1, 0, 0, 1  # I
+def matrix_period(size: int, matrix_tuple: tuple[int, int, int, int], max_steps: int = 200_000) -> int | None:
+    """
+    mod N에서 A^k = I가 되는 최소 k를 찾는다.
+    너무 오래 걸리는 경우 None을 반환한다.
+    """
+    a, b, c, d = matrix_tuple
+    matrix = np.array([[a, b], [c, d]], dtype=np.int64) % size
+    identity = np.eye(2, dtype=np.int64) % size
 
-    for k in range(1, max_iter + 1):
-        # M <- A M mod n
-        ma, mb, mc, md = (
-            (a * ma + b * mc) % n,
-            (a * mb + b * md) % n,
-            (c * ma + d * mc) % n,
-            (c * mb + d * md) % n,
-        )
-        if (ma, mb, mc, md) == (1, 0, 0, 1):
+    power = identity.copy()
+
+    for k in range(1, max_steps + 1):
+        power = (power @ matrix) % size
+        if np.array_equal(power, identity):
             return k
+
     return None
 
 
-# -----------------------------
-# Session state helpers
-# -----------------------------
+def get_matrix_latex(matrix: np.ndarray) -> str:
+    a, b = matrix[0, 0], matrix[0, 1]
+    c, d = matrix[1, 0], matrix[1, 1]
 
-def init_state_from_image(img: Image.Image, source_key: str, period: int | None):
-    st.session_state.source_key = source_key
-    st.session_state.original_arr = np.array(img.convert("RGB"))
-    st.session_state.current_arr = st.session_state.original_arr.copy()
+    return rf"""
+    A=
+    \begin{{pmatrix}}
+    {a} & {b}\\
+    {c} & {d}
+    \end{{pmatrix}}
+    """
+
+
+# =========================
+# Session State 초기화
+# =========================
+
+if "base_array" not in st.session_state:
+    st.session_state.base_array = None
+
+if "current_array" not in st.session_state:
+    st.session_state.current_array = None
+
+if "iteration" not in st.session_state:
     st.session_state.iteration = 0
-    st.session_state.period = period
+
+if "config_signature" not in st.session_state:
+    st.session_state.config_signature = None
 
 
-def current_pil_image() -> Image.Image:
-    return Image.fromarray(st.session_state.current_arr.astype(np.uint8), mode="RGB")
-
-
-def effective_iteration() -> int:
-    period = st.session_state.get("period")
-    it = st.session_state.get("iteration", 0)
-    if period:
-        return it % period
-    return it
-
-
-# -----------------------------
+# =========================
 # UI
-# -----------------------------
+# =========================
 
 st.title("🐈 Arnold's Cat Map 체험기")
-st.caption("이미지를 단순한 규칙으로 계속 섞으면, 무작위처럼 보이다가 다시 원래 모습으로 돌아옵니다.")
 
-with st.sidebar:
-    st.header("설정")
-    uploaded = st.file_uploader(
+st.markdown(
+    """
+이미지를 정해진 선형변환으로 계속 섞어보세요.  
+무작위처럼 보이지만, 사실은 **결정론적이고 가역적인 변환**입니다.
+"""
+)
+
+st.caption("기획 및 출처: 김사무 · 취미로 배우는 수학")
+
+left, right = st.columns([0.32, 0.68], gap="large")
+
+with left:
+    st.subheader("설정")
+
+    uploaded_file = st.file_uploader(
         "이미지 업로드",
         type=["png", "jpg", "jpeg", "webp"],
-        help="업로드한 이미지는 Arnold's Cat Map 적용을 위해 정사각형으로 변환됩니다.",
+    )
+
+    fit_mode = st.radio(
+        "정사각형 변환 방식",
+        options=["가운데 자르기", "전체 보존하기"],
+        index=0,
+        help="Arnold's Cat Map은 정사각형 격자 위에서 가장 깔끔하게 작동합니다.",
     )
 
     size = st.selectbox(
         "내부 계산 크기",
         options=[256, 512, 768, 1024],
         index=1,
-        help="512×512가 속도와 화질의 균형이 좋습니다.",
+        help="크기가 클수록 화질은 좋아지지만 계산이 느려질 수 있습니다.",
     )
 
-    transform_mode_label = st.radio(
-        "정사각형 변환 방식",
-        options=["가운데 자르기", "전체 보존하기"],
+    matrix_name = st.selectbox(
+        "선형변환 선택",
+        options=list(MATRIX_PRESETS.keys()),
         index=0,
-        help="Arnold's Cat Map은 정사각형 격자에서 가장 깔끔하게 작동합니다.",
     )
 
-    padding_label = "어두운 회색"
-    if transform_mode_label == "전체 보존하기":
-        padding_label = st.selectbox(
-            "여백 색",
-            options=["어두운 회색", "흰색", "검정", "연회색"],
-            index=0,
-        )
+    matrix = MATRIX_PRESETS[matrix_name]
+    matrix_tuple = tuple(int(v) for v in matrix.flatten())
 
-    padding_colors = {
-        "어두운 회색": (20, 20, 24),
-        "흰색": (255, 255, 255),
-        "검정": (0, 0, 0),
-        "연회색": (235, 238, 242),
-    }
-    padding_color = padding_colors[padding_label]
+    st.markdown(f"**{matrix_name}**")
+    st.caption(MATRIX_DESCRIPTIONS[matrix_name])
+    st.latex(get_matrix_latex(matrix))
+
+    det = int(round(np.linalg.det(matrix)))
+    trace = int(matrix[0, 0] + matrix[1, 1])
+
+    st.markdown(
+        f"""
+- determinant: `{det}`
+- trace: `{trace}`
+"""
+    )
+
+    period = matrix_period(size, matrix_tuple)
+
+    if period is None:
+        st.info("이 설정의 주기를 제한 시간 안에 찾지 못했습니다.")
+    else:
+        st.success(f"이 설정에서는 {period}번 반복하면 원래 이미지로 돌아옵니다.")
 
     st.divider()
-    st.markdown("### 설명")
-    st.markdown(
-        """
-        - **가운데 자르기**: 중앙을 기준으로 정사각형으로 잘라 사용합니다.
-        - **전체 보존하기**: 원본 전체를 유지하고 남는 공간을 여백으로 채웁니다.
-        """
+
+    st.subheader("조작")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        step_one = st.button("1번 섞기", use_container_width=True)
+    with col_b:
+        step_ten = st.button("10번 섞기", use_container_width=True)
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        undo_one = st.button("1번 되돌리기", use_container_width=True)
+    with col_d:
+        reset = st.button("초기화", use_container_width=True)
+
+    restore = st.button("원래대로 돌아가기", use_container_width=True)
+
+    st.divider()
+
+    auto_play = st.checkbox("자동 재생")
+    auto_delay = st.slider(
+        "자동 재생 간격",
+        min_value=0.05,
+        max_value=1.0,
+        value=0.2,
+        step=0.05,
     )
 
-# Load and preprocess source image
-if uploaded is not None:
-    raw_bytes = uploaded.getvalue()
-    raw_hash = hashlib.md5(raw_bytes).hexdigest()
-    source_img = Image.open(BytesIO(raw_bytes))
+
+# =========================
+# 이미지 로딩 및 전처리
+# =========================
+
+if uploaded_file is not None:
+    uploaded_bytes = uploaded_file.getvalue()
+    image_hash = hashlib.sha256(uploaded_bytes).hexdigest()
+    source_image = Image.open(BytesIO(uploaded_bytes))
 else:
-    raw_hash = "demo"
-    source_img = make_demo_image(size)
+    image_hash = "default-demo-image"
+    source_image = create_default_demo_image(512)
 
-mode_key = "crop" if transform_mode_label == "가운데 자르기" else "fit"
-source_key = f"{raw_hash}|{size}|{mode_key}|{padding_label}"
+config_signature = f"{image_hash}-{fit_mode}-{size}-{matrix_name}"
 
-if mode_key == "crop":
-    prepared_img = center_crop_to_square(source_img, size)
-else:
-    prepared_img = fit_with_padding_to_square(source_img, size, padding_color)
+if config_signature != st.session_state.config_signature:
+    if fit_mode == "가운데 자르기":
+        processed = center_crop_and_resize(source_image, size)
+    else:
+        processed = fit_with_padding_and_resize(source_image, size)
 
-period = find_matrix_period(size)
+    base_array = np.array(processed, dtype=np.uint8)
 
-if "source_key" not in st.session_state or st.session_state.source_key != source_key:
-    init_state_from_image(prepared_img, source_key, period)
+    st.session_state.base_array = base_array
+    st.session_state.current_array = base_array.copy()
+    st.session_state.iteration = 0
+    st.session_state.config_signature = config_signature
 
-# Controls
-left, right = st.columns([1.2, 1])
 
-with left:
-    st.subheader("이미지")
+# =========================
+# 버튼 동작 처리
+# =========================
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+if step_one:
+    st.session_state.current_array = apply_cat_map(st.session_state.current_array, matrix)
+    st.session_state.iteration += 1
 
-    with c1:
-        if st.button("1번 섞기", use_container_width=True):
-            st.session_state.current_arr = cat_forward(st.session_state.current_arr)
-            st.session_state.iteration += 1
-            st.rerun()
+if step_ten:
+    for _ in range(10):
+        st.session_state.current_array = apply_cat_map(st.session_state.current_array, matrix)
+    st.session_state.iteration += 10
 
-    with c2:
-        if st.button("10번 섞기", use_container_width=True):
-            st.session_state.current_arr = apply_steps(st.session_state.current_arr, 10)
-            st.session_state.iteration += 10
-            st.rerun()
+if undo_one:
+    st.session_state.current_array = apply_inverse_cat_map(st.session_state.current_array, matrix)
+    st.session_state.iteration -= 1
 
-    with c3:
-        if st.button("1번 되돌리기", use_container_width=True):
-            st.session_state.current_arr = cat_inverse(st.session_state.current_arr)
-            st.session_state.iteration -= 1
-            st.rerun()
+if reset or restore:
+    st.session_state.current_array = st.session_state.base_array.copy()
+    st.session_state.iteration = 0
 
-    with c4:
-        if st.button("초기화", use_container_width=True):
-            st.session_state.current_arr = st.session_state.original_arr.copy()
-            st.session_state.iteration = 0
-            st.rerun()
 
-    with c5:
-        jump_to_period = st.button("원래대로", use_container_width=True, disabled=period is None)
-        if jump_to_period and period is not None:
-            remaining = (-effective_iteration()) % period
-            st.session_state.current_arr = apply_steps(st.session_state.current_arr, remaining)
-            st.session_state.iteration += remaining
-            st.rerun()
+# =========================
+# 결과 표시
+# =========================
 
-    frames = st.slider("자동 재생 프레임 수", 5, 200, 40, 5)
-    speed = st.slider("자동 재생 속도: 프레임 간 대기 시간(초)", 0.00, 0.30, 0.04, 0.01)
+with right:
+    st.subheader("결과")
 
-    image_placeholder = st.empty()
+    current_array = st.session_state.current_array
+    current_iteration = st.session_state.iteration
 
-    if st.button("자동 재생 시작", type="primary", use_container_width=True):
-        for _ in range(frames):
-            st.session_state.current_arr = cat_forward(st.session_state.current_arr)
-            st.session_state.iteration += 1
-            image_placeholder.image(
-                current_pil_image(),
-                caption=f"현재 반복 횟수: {effective_iteration()}" + (f" / 주기 {period}" if period else ""),
-                use_container_width=True,
-            )
-            time.sleep(speed)
+    if period is not None:
+        effective_iteration = current_iteration % period
+        st.markdown(
+            f"""
+현재 반복 횟수: **{current_iteration}회**  
+주기 기준 위치: **{effective_iteration} / {period}**
+"""
+        )
+    else:
+        st.markdown(f"현재 반복 횟수: **{current_iteration}회**")
 
-    image_placeholder.image(
-        current_pil_image(),
-        caption=f"현재 반복 횟수: {effective_iteration()}" + (f" / 주기 {period}" if period else ""),
+    st.image(
+        current_array,
+        caption=f"{matrix_name} · {fit_mode} · {size}×{size}",
         use_container_width=True,
     )
 
+    png_bytes = image_to_png_bytes(current_array)
+
     st.download_button(
-        "현재 이미지 PNG로 저장",
-        data=image_to_png_bytes(current_pil_image()),
-        file_name=f"arnolds_cat_map_step_{effective_iteration()}.png",
+        label="현재 이미지 PNG 다운로드",
+        data=png_bytes,
+        file_name="arnolds_cat_map_result.png",
         mime="image/png",
         use_container_width=True,
     )
 
-with right:
-    st.subheader("수학적 구조")
-    st.latex(r"""
-    \begin{pmatrix}x' \\ y'\end{pmatrix}
-    =
-    \begin{pmatrix}1 & 1 \\ 1 & 2\end{pmatrix}
-    \begin{pmatrix}x \\ y\end{pmatrix}
-    \pmod{N}
-    """)
-
-    st.markdown(
-        f"""
-        현재 내부 격자 크기는 **{size}×{size}**입니다.
-
-        - $x'=(x+y)\mod N$
-        - $y'=(x+2y)\mod N$
-        - 행렬식은 $1$이므로 픽셀 정보가 사라지지 않습니다.
-        - 유한한 픽셀 격자 위에서는 이 변환이 일종의 **순열(permutation)** 이 됩니다.
-        """
-    )
-
-    if period is not None:
-        st.success(f"이 격자 크기에서 모든 픽셀이 원래 자리로 돌아오는 주기: {period}회")
-    else:
-        st.warning("설정한 탐색 한도 안에서 주기를 찾지 못했습니다.")
+    st.markdown("---")
 
     st.markdown(
         """
-        ### 관찰 포인트
-        1. 처음 몇 번은 이미지가 찢어지고 접히는 것처럼 보입니다.
-        2. 중간에는 거의 노이즈처럼 보입니다.
-        3. 하지만 정보가 사라진 것이 아니라 위치가 재배열된 것입니다.
-        4. 충분히 반복하면 다시 원래 이미지가 나타납니다.
-        """
+### 무엇을 보고 있는 걸까?
+
+각 픽셀의 좌표를 다음과 같은 방식으로 이동시킵니다.
+
+\\[
+\\begin{pmatrix}
+x'\\\\
+y'
+\\end{pmatrix}
+=
+A
+\\begin{pmatrix}
+x\\\\
+y
+\\end{pmatrix}
+\\pmod N
+\\]
+
+여기서 \\(N\\)은 이미지의 한 변의 픽셀 수입니다.  
+행렬식이 1이므로 픽셀 정보는 사라지지 않고, 단지 위치가 재배열됩니다.
+
+즉, 이미지는 엉망으로 섞이는 것처럼 보이지만 실제로는 정보가 보존됩니다.  
+유한한 픽셀 격자 위에서는 결국 같은 상태가 반복되므로, 충분히 반복하면 원래 이미지가 다시 나타납니다.
+"""
     )
 
-st.divider()
-st.markdown(
-    """
-    #### 사용 팁
-    - 인물 사진이나 사물 사진은 **가운데 자르기**가 보통 더 예쁩니다.
-    - 캡처 화면이나 문서 이미지는 **전체 보존하기**가 더 안전합니다.
-    - 512×512는 웹 체험용으로 속도와 화질의 균형이 좋습니다.
-    """
-)
+    st.caption("기획 및 출처: 김사무 · 취미로 배우는 수학")
+
+
+# =========================
+# 자동 재생
+# =========================
+
+if auto_play:
+    time.sleep(auto_delay)
+    st.session_state.current_array = apply_cat_map(st.session_state.current_array, matrix)
+    st.session_state.iteration += 1
+    st.rerun()

@@ -81,11 +81,21 @@ def create_default_demo_image(size: int = 512) -> Image.Image:
     # 눈
     eye_r = size // 35
     draw.ellipse(
-        (cx - r // 2 - eye_r, cy - r // 5 - eye_r, cx - r // 2 + eye_r, cy - r // 5 + eye_r),
+        (
+            cx - r // 2 - eye_r,
+            cy - r // 5 - eye_r,
+            cx - r // 2 + eye_r,
+            cy - r // 5 + eye_r,
+        ),
         fill=(245, 245, 245),
     )
     draw.ellipse(
-        (cx + r // 2 - eye_r, cy - r // 5 - eye_r, cx + r // 2 + eye_r, cy - r // 5 + eye_r),
+        (
+            cx + r // 2 - eye_r,
+            cy - r // 5 - eye_r,
+            cx + r // 2 + eye_r,
+            cy - r // 5 + eye_r,
+        ),
         fill=(245, 245, 245),
     )
 
@@ -131,7 +141,10 @@ def create_default_demo_image(size: int = 512) -> Image.Image:
     draw.rectangle((20, 20, 20 + block, 20 + block), fill=(180, 80, 80))
     draw.rectangle((size - 20 - block, 20, size - 20, 20 + block), fill=(80, 130, 190))
     draw.rectangle((20, size - 20 - block, 20 + block, size - 20), fill=(80, 160, 100))
-    draw.rectangle((size - 20 - block, size - 20 - block, size - 20, size - 20), fill=(180, 150, 60))
+    draw.rectangle(
+        (size - 20 - block, size - 20 - block, size - 20, size - 20),
+        fill=(180, 150, 60),
+    )
 
     return img
 
@@ -224,7 +237,9 @@ def apply_cat_map(array: np.ndarray, matrix: np.ndarray) -> np.ndarray:
 def inverse_matrix_det_one(matrix: np.ndarray) -> np.ndarray:
     """
     det = 1인 2x2 정수 행렬의 정수 역행렬을 구한다.
-    A = [[a,b],[c,d]]이면 A^{-1} = [[d,-b],[-c,a]]
+
+    A = [[a,b],[c,d]]이면
+    A^{-1} = [[d,-b],[-c,a]]
     """
     a, b = matrix[0, 0], matrix[0, 1]
     c, d = matrix[1, 0], matrix[1, 1]
@@ -483,27 +498,29 @@ with right:
 
     st.markdown("---")
 
+    st.markdown("### 무엇을 보고 있는 걸까?")
+
+    st.markdown("각 픽셀의 좌표를 다음과 같은 방식으로 이동시킵니다.")
+
+    st.latex(
+        r"""
+        \begin{pmatrix}
+        x'\\
+        y'
+        \end{pmatrix}
+        =
+        A
+        \begin{pmatrix}
+        x\\
+        y
+        \end{pmatrix}
+        \pmod{N}
+        """
+    )
+
     st.markdown(
         """
-### 무엇을 보고 있는 걸까?
-
-각 픽셀의 좌표를 다음과 같은 방식으로 이동시킵니다.
-
-\\[
-\\begin{pmatrix}
-x'\\\\
-y'
-\\end{pmatrix}
-=
-A
-\\begin{pmatrix}
-x\\\\
-y
-\\end{pmatrix}
-\\pmod N
-\\]
-
-여기서 \\(N\\)은 이미지의 한 변의 픽셀 수입니다.  
+여기서 N은 이미지의 한 변의 픽셀 수입니다.  
 행렬식이 1이므로 픽셀 정보는 사라지지 않고, 단지 위치가 재배열됩니다.
 
 즉, 이미지는 엉망으로 섞이는 것처럼 보이지만 실제로는 정보가 보존됩니다.  
